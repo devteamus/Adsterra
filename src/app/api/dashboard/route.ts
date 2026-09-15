@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   getStats,
   listPlacements,
-  listSmartLinks,
   todayYMD,
   MIN_DATE,
   AdsterraApiError,
@@ -42,7 +41,8 @@ interface RangeSummary {
 }
 
 interface CountryRow {
-  country: string;
+  countryCode: string;
+  countryName: string;
   impressions: number;
   clicks: number;
   ctr: number;
@@ -66,15 +66,64 @@ interface DashboardData {
   daily: DailyPoint[];
   linkEarnings: LinkEarning[];
   topCountries: CountryRow[];
-  smartLinks: {
-    id: number;
-    title: string;
-    url: string;
-    trafficType: string;
-    status: string;
-  }[];
   placementsCount: number;
   activeDirectLinksCount: number;
+}
+
+/** ISO 3166-1 alpha-2 → full English country name. */
+const COUNTRY_NAMES: Record<string, string> = {
+  AF: "Afghanistan", AL: "Albania", DZ: "Algeria", AD: "Andorra", AO: "Angola",
+  AG: "Antigua and Barbuda", AR: "Argentina", AM: "Armenia", AU: "Australia",
+  AT: "Austria", AZ: "Azerbaijan", BS: "Bahamas", BH: "Bahrain", BD: "Bangladesh",
+  BB: "Barbados", BY: "Belarus", BE: "Belgium", BZ: "Belize", BJ: "Benin",
+  BT: "Bhutan", BO: "Bolivia", BA: "Bosnia and Herzegovina", BW: "Botswana",
+  BR: "Brazil", BN: "Brunei", BG: "Bulgaria", BF: "Burkina Faso", BI: "Burundi",
+  KH: "Cambodia", CM: "Cameroon", CA: "Canada", CV: "Cape Verde",
+  CF: "Central African Republic", TD: "Chad", CL: "Chile", CN: "China",
+  CO: "Colombia", KM: "Comoros", CG: "Congo", CD: "Congo (DRC)",
+  CR: "Costa Rica", CI: "Côte d'Ivoire", HR: "Croatia", CU: "Cuba",
+  CY: "Cyprus", CZ: "Czech Republic", DK: "Denmark", DJ: "Djibouti",
+  DM: "Dominica", DO: "Dominican Republic", EC: "Ecuador", EG: "Egypt",
+  SV: "El Salvador", GQ: "Equatorial Guinea", ER: "Eritrea", EE: "Estonia",
+  SZ: "Eswatini", ET: "Ethiopia", FJ: "Fiji", FI: "Finland", FR: "France",
+  GA: "Gabon", GM: "Gambia", GE: "Georgia", DE: "Germany", GH: "Ghana",
+  GR: "Greece", GD: "Grenada", GT: "Guatemala", GN: "Guinea", GW: "Guinea-Bissau",
+  GY: "Guyana", HT: "Haiti", HN: "Honduras", HK: "Hong Kong", HU: "Hungary",
+  IS: "Iceland", IN: "India", ID: "Indonesia", IR: "Iran", IQ: "Iraq",
+  IE: "Ireland", IL: "Israel", IT: "Italy", JM: "Jamaica", JP: "Japan",
+  JO: "Jordan", KZ: "Kazakhstan", KE: "Kenya", KI: "Kiribati",
+  KP: "North Korea", KR: "South Korea", KW: "Kuwait", KG: "Kyrgyzstan",
+  LA: "Laos", LV: "Latvia", LB: "Lebanon", LS: "Lesotho", LR: "Liberia",
+  LY: "Libya", LI: "Liechtenstein", LT: "Lithuania", LU: "Luxembourg",
+  MO: "Macao", MG: "Madagascar", MW: "Malawi", MY: "Malaysia", MV: "Maldives",
+  ML: "Mali", MT: "Malta", MH: "Marshall Islands", MR: "Mauritania",
+  MU: "Mauritius", MX: "Mexico", FM: "Micronesia", MD: "Moldova",
+  MC: "Monaco", MN: "Mongolia", ME: "Montenegro", MA: "Morocco",
+  MZ: "Mozambique", MM: "Myanmar", NA: "Namibia", NR: "Nauru", NP: "Nepal",
+  NL: "Netherlands", NZ: "New Zealand", NI: "Nicaragua", NE: "Niger",
+  NG: "Nigeria", MK: "North Macedonia", NO: "Norway", OM: "Oman",
+  PK: "Pakistan", PW: "Palau", PA: "Panama", PG: "Papua New Guinea",
+  PY: "Paraguay", PE: "Peru", PH: "Philippines", PL: "Poland", PT: "Portugal",
+  QA: "Qatar", RO: "Romania", RU: "Russia", RW: "Rwanda",
+  KN: "Saint Kitts and Nevis", LC: "Saint Lucia",
+  VC: "Saint Vincent and the Grenadines", WS: "Samoa", SM: "San Marino",
+  ST: "São Tomé and Príncipe", SA: "Saudi Arabia", SN: "Senegal",
+  RS: "Serbia", SC: "Seychelles", SL: "Sierra Leone", SG: "Singapore",
+  SK: "Slovakia", SI: "Slovenia", SB: "Solomon Islands", SO: "Somalia",
+  ZA: "South Africa", SS: "South Sudan", ES: "Spain", LK: "Sri Lanka",
+  SD: "Sudan", SR: "Suriname", SE: "Sweden", CH: "Switzerland", SY: "Syria",
+  TW: "Taiwan", TJ: "Tajikistan", TZ: "Tanzania", TH: "Thailand",
+  TL: "Timor-Leste", TG: "Togo", TO: "Tonga", TT: "Trinidad and Tobago",
+  TN: "Tunisia", TR: "Turkey", TM: "Turkmenistan", TV: "Tuvalu",
+  UG: "Uganda", UA: "Ukraine", AE: "United Arab Emirates", GB: "United Kingdom",
+  US: "United States", UY: "Uruguay", UZ: "Uzbekistan", VU: "Vanuatu",
+  VA: "Vatican City", VE: "Venezuela", VN: "Vietnam", YE: "Yemen",
+  ZM: "Zambia", ZW: "Zimbabwe",
+};
+
+function countryName(code: string): string {
+  if (!code || code.length !== 2) return code || "Unknown";
+  return COUNTRY_NAMES[code.toUpperCase()] ?? code.toUpperCase();
 }
 
 function addDays(ymd: string, days: number): string {
@@ -90,9 +139,30 @@ function summarize(items: { impression?: number; clicks?: number; ctr?: number; 
   return { impressions, clicks, revenue };
 }
 
-export async function GET() {
-  const startDate = MIN_DATE; // hard floor: 2026-09-01
-  const finishDate = todayYMD();
+/** Validate YYYY-MM-DD and return true if format is valid. */
+function isValidYmd(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + "T00:00:00Z"));
+}
+
+export async function GET(request: Request) {
+  const today = todayYMD();
+  const url = new URL(request.url);
+
+  // Allow client to override the date range via query params.
+  // Both are clamped to the floor (MIN_DATE) and to today.
+  const qStart = url.searchParams.get("start_date");
+  const qFinish = url.searchParams.get("finish_date");
+
+  let finishDate = today;
+  if (qFinish && isValidYmd(qFinish)) {
+    finishDate = qFinish > today ? today : qFinish;
+  }
+
+  let startDate = MIN_DATE;
+  if (qStart && isValidYmd(qStart)) {
+    startDate = qStart < MIN_DATE ? MIN_DATE : qStart;
+  }
+  if (startDate > finishDate) startDate = finishDate;
 
   // Compute 7/15/30-day window starts (clamped to the floor)
   const day7Start = addDays(finishDate, -6);
@@ -109,7 +179,6 @@ export async function GET() {
       r15,
       r30,
       placements,
-      smartLinks,
     ] = await Promise.all([
       getStats({ startDate, finishDate, groupBy: ["date"] }),
       getStats({ startDate, finishDate, groupBy: ["placement"] }),
@@ -118,7 +187,6 @@ export async function GET() {
       getStats({ startDate: day15Start, finishDate, groupBy: ["date"] }),
       getStats({ startDate: day30Start, finishDate, groupBy: ["date"] }),
       listPlacements(),
-      listSmartLinks(),
     ]);
 
     // Build placement lookup: id -> { title, alias, direct_url }
@@ -134,8 +202,6 @@ export async function GET() {
     const totalRevenue = byLinkRes.items.reduce((s, r) => s + Number(r.revenue ?? 0), 0);
 
     // Per-link earnings — only placements that have a direct_url (active direct links).
-    // If a placement has no direct_url, Adsterra reports it as a non-direct ad unit
-    // (e.g. popunders served on the site). We hide those per user request.
     const linkEarnings: LinkEarning[] = byLinkRes.items
       .map((r) => {
         const id = Number(r.placement);
@@ -169,18 +235,22 @@ export async function GET() {
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    // Top 5 countries by revenue
+    // Top 10 countries by revenue (with full names)
     const topCountries: CountryRow[] = byCountryRes.items
-      .map((r) => ({
-        country: String(r.country ?? "—"),
-        impressions: Number(r.impression ?? 0),
-        clicks: Number(r.clicks ?? 0),
-        ctr: Number(r.ctr ?? 0),
-        cpm: Number(r.cpm ?? 0),
-        revenue: Number(r.revenue ?? 0),
-      }))
+      .map((r) => {
+        const cc = String(r.country ?? "—");
+        return {
+          countryCode: cc,
+          countryName: countryName(cc),
+          impressions: Number(r.impression ?? 0),
+          clicks: Number(r.clicks ?? 0),
+          ctr: Number(r.ctr ?? 0),
+          cpm: Number(r.cpm ?? 0),
+          revenue: Number(r.revenue ?? 0),
+        };
+      })
       .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 5);
+      .slice(0, 10);
 
     // Range summaries
     const s7 = summarize(r7.items);
@@ -213,13 +283,6 @@ export async function GET() {
       daily,
       linkEarnings,
       topCountries,
-      smartLinks: smartLinks.map((s) => ({
-        id: s.id,
-        title: s.title,
-        url: s.url,
-        trafficType: s.traffic_type,
-        status: s.status,
-      })),
       placementsCount: placements.length,
       activeDirectLinksCount,
     };

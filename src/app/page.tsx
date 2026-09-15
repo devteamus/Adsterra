@@ -12,15 +12,12 @@ import {
 } from "recharts";
 import {
   Activity,
-  Copy,
-  Check,
-  ExternalLink,
+  Calendar,
   Eye,
   Globe2,
   Link2,
   MousePointerClick,
   RefreshCw,
-  Share2,
   TrendingUp,
   Wallet,
 } from "lucide-react";
@@ -29,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -70,20 +68,13 @@ interface RangeSummary {
 }
 
 interface CountryRow {
-  country: string;
+  countryCode: string;
+  countryName: string;
   impressions: number;
   clicks: number;
   ctr: number;
   cpm: number;
   revenue: number;
-}
-
-interface SmartLink {
-  id: number;
-  title: string;
-  url: string;
-  trafficType: string;
-  status: string;
 }
 
 interface DashboardData {
@@ -102,7 +93,6 @@ interface DashboardData {
   daily: DailyPoint[];
   linkEarnings: LinkEarning[];
   topCountries: CountryRow[];
-  smartLinks: SmartLink[];
   placementsCount: number;
   activeDirectLinksCount: number;
 }
@@ -133,45 +123,73 @@ function formatDateLabel(iso: string): string {
   });
 }
 
-function hostnameOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
+function todayYMDLocal(): string {
+  const d = new Date();
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+}
+
+function flagEmoji(country: string): string {
+  if (!country || country.length !== 2 || country === "—") return "🏳️";
+  const code = country.toUpperCase();
+  const cp: number[] = [];
+  for (let i = 0; i < code.length; i++) {
+    cp.push(0x1f1e6 + (code.charCodeAt(i) - 65));
   }
+  return String.fromCodePoint(...cp);
 }
 
 export default function DashboardPage() {
+  // Default range: from the API floor (Sept 1, 2026) to today.
+  const FLOOR = "2026-09-01";
+  const [startDate, setStartDate] = useState<string>(FLOOR);
+  const [finishDate, setFinishDate] = useState<string>(todayYMDLocal());
+
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchData = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/dashboard", {
-        cache: "no-store",
-        headers: { "x-vercel-no-cache": "1" },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `Request failed with HTTP ${res.status}`);
+  const fetchData = useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
+      setError(null);
+      try {
+        const qs = new URLSearchParams({
+          start_date: startDate,
+          finish_date: finishDate,
+        });
+        const res = await fetch(`/api/dashboard?${qs.toString()}`, {
+          cache: "no-store",
+          headers: { "x-vercel-no-cache": "1" },
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body?.error || `Request failed with HTTP ${res.status}`);
+        }
+        const json = (await res.json()) as DashboardData;
+        setData(json);
+        // Sync local state to actual clamped values returned by server.
+        setStartDate(json.startDate);
+        setFinishDate(json.finishDate);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      const json = (await res.json()) as DashboardData;
-      setData(json);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+    },
+    [startDate, finishDate]
+  );
 
   useEffect(() => {
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyRange = useCallback(() => {
+    fetchData(false);
   }, [fetchData]);
 
   const topLink = useMemo(() => {
@@ -232,13 +250,56 @@ export default function DashboardPage() {
           </Alert>
         )}
 
+        {/* Custom date range picker */}
+        <Card>
+          <CardContent className="p-3 sm:p-4">
+            <div className="flex flex-col sm:flex-row sm:items-end gap-3 sm:gap-4">
+              <div className="flex items-center gap-2 text-sm font-medium shrink-0">
+                <Calendar className="size-4 text-muted-foreground" />
+                Date range
+              </div>
+              <div className="grid grid-cols-2 sm:flex sm:flex-1 gap-2 sm:gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase text-muted-foreground">From</label>
+                  <Input
+                    type="date"
+                    value={startDate}
+                    min={FLOOR}
+                    max={finishDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase text-muted-foreground">To</label>
+                  <Input
+                    type="date"
+                    value={finishDate}
+                    min={startDate}
+                    max={todayYMDLocal()}
+                    onChange={(e) => setFinishDate(e.target.value)}
+                    className="h-9 text-sm"
+                  />
+                </div>
+              </div>
+              <Button onClick={applyRange} disabled={loading} className="h-9 sm:w-auto w-full">
+                <TrendingUp className="size-4" />
+                Apply
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-2">
+              Earliest available date: {FLOOR}. Old data is hidden permanently.
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Top KPI row: Live Balance + 7/15/30 day ranges */}
         <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <KpiCard
             icon={<Wallet className="size-4" />}
             label="Live Balance"
             value={loading ? null : formatUsd(data?.totals.revenue ?? 0)}
-            hint={`Since ${data?.minDate ?? "Sept 1, 2026"}`}
+            hint={`Selected range`}
             tone="primary"
           />
           {loading ? (
@@ -349,7 +410,7 @@ export default function DashboardPage() {
           </Card>
         </section>
 
-        {/* Per-link + Top countries */}
+        {/* Per-link + Top 10 countries */}
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
@@ -364,7 +425,7 @@ export default function DashboardPage() {
               {loading ? (
                 <Skeleton className="h-[320px] w-full" />
               ) : (
-                <div className="max-h-[420px] overflow-y-auto rounded-md border border-border/60 custom-scroll">
+                <div className="max-h-[480px] overflow-y-auto rounded-md border border-border/60 custom-scroll">
                   <Table>
                     <TableHeader className="sticky top-0 bg-card z-10">
                       <TableRow>
@@ -383,7 +444,7 @@ export default function DashboardPage() {
                             colSpan={6}
                             className="text-center text-muted-foreground py-8 text-sm"
                           >
-                            No active direct links with earnings since {data?.minDate ?? "Sept 1, 2026"}.
+                            No active direct links with earnings in the selected range.
                           </TableCell>
                         </TableRow>
                       ) : (
@@ -432,29 +493,29 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">Top 5 Countries</CardTitle>
+                <CardTitle className="text-sm font-medium">Top 10 Countries</CardTitle>
                 <Globe2 className="size-4 text-muted-foreground" />
               </div>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <Skeleton className="h-[260px] w-full" />
+                <Skeleton className="h-[420px] w-full" />
               ) : data?.topCountries.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No country breakdown available.
                 </p>
               ) : (
-                <div className="space-y-2">
+                <div className="max-h-[480px] overflow-y-auto space-y-2 custom-scroll pr-1">
                   {data?.topCountries.map((c, i) => {
                     const max = data?.topCountries[0]?.revenue ?? 1;
                     return (
                       <div key={i} className="space-y-1">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="font-medium flex items-center gap-2">
-                            <span className="text-base">{flagEmoji(c.country)}</span>
-                            {c.country}
+                        <div className="flex items-center justify-between text-sm gap-2">
+                          <span className="font-medium flex items-center gap-2 min-w-0">
+                            <span className="text-base shrink-0">{flagEmoji(c.countryCode)}</span>
+                            <span className="truncate">{c.countryName}</span>
                           </span>
-                          <span className="tabular-nums font-medium">
+                          <span className="tabular-nums font-medium shrink-0">
                             {formatUsd(c.revenue)}
                           </span>
                         </div>
@@ -475,96 +536,6 @@ export default function DashboardPage() {
                       </div>
                     );
                   })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* Social share preview cards */}
-        <section>
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">Shareable Preview Cards</CardTitle>
-                <Badge variant="secondary">
-                  {data?.linkEarnings.length ?? 0} links
-                </Badge>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Each card is a copy-ready share preview with the direct URL, copy button and earnings.
-              </p>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-[150px] w-full" />
-                  ))}
-                </div>
-              ) : data?.linkEarnings.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No shareable cards yet — once Adsterra records direct link traffic, preview cards will appear here.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                  {data?.linkEarnings.map((link) => (
-                    <ShareCard key={link.placementId} link={link} />
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* Smart Links */}
-        <section>
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">Smart Links</CardTitle>
-                <Badge variant="secondary">
-                  {data?.smartLinks.length ?? 0}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <Skeleton className="h-[200px] w-full" />
-              ) : data?.smartLinks.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No SmartLinks configured.
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {data?.smartLinks.map((sl) => (
-                    <div
-                      key={sl.id}
-                      className="rounded-md border border-border/60 p-3 hover:bg-muted/50 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="font-medium text-sm truncate">{sl.title}</span>
-                        <Badge
-                          variant={sl.status === "Active" ? "default" : "outline"}
-                          className="text-[10px]"
-                        >
-                          {sl.status}
-                        </Badge>
-                      </div>
-                      <a
-                        href={sl.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-muted-foreground hover:text-primary truncate block flex items-center gap-1"
-                      >
-                        <Link2 className="size-3 shrink-0" />
-                        <span className="truncate">{sl.url}</span>
-                      </a>
-                      <div className="mt-1 text-[11px] text-muted-foreground">
-                        {sl.trafficType} · ID {sl.id}
-                      </div>
-                    </div>
-                  ))}
                 </div>
               )}
             </CardContent>
@@ -676,112 +647,11 @@ function ShareBar({ value }: { value: number }) {
   );
 }
 
-function flagEmoji(country: string): string {
-  if (!country || country.length !== 2 || country === "—") return "🏳️";
-  const code = country.toUpperCase();
-  const cp: number[] = [];
-  for (let i = 0; i < code.length; i++) {
-    cp.push(0x1f1e6 + (code.charCodeAt(i) - 65));
-  }
-  return String.fromCodePoint(...cp);
-}
-
-function ShareCard({ link }: { link: LinkEarning }) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(link.directUrl ?? "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // ignore
-    }
-  }, [link.directUrl]);
-
-  return (
-    <div className="rounded-lg border border-border/60 overflow-hidden bg-card hover:shadow-md transition-shadow">
-      {/* Header strip */}
-      <div className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground px-3 py-3">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider opacity-80">
-            Adsterra Direct Link
-          </span>
-          <Badge
-            variant="secondary"
-            className="text-[10px] bg-white/20 text-primary-foreground border-0"
-          >
-            ${link.revenue.toFixed(2)}
-          </Badge>
-        </div>
-        <div className="mt-1 font-semibold text-sm truncate">{link.title}</div>
-      </div>
-
-      {/* Body */}
-      <div className="p-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <div className="size-8 rounded bg-muted grid place-items-center text-muted-foreground shrink-0">
-            <Share2 className="size-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] text-muted-foreground">{hostnameOf(link.directUrl ?? "")}</div>
-            <div className="text-xs font-mono truncate">{link.directUrl}</div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-1 text-center pt-1">
-          <MiniStat label="Impr." value={formatInt(link.impressions)} />
-          <MiniStat label="Clicks" value={formatInt(link.clicks)} />
-          <MiniStat label="CPM" value={formatUsd(link.cpm)} />
-        </div>
-
-        <div className="flex gap-1.5 pt-1">
-          <Button
-            size="sm"
-            variant="outline"
-            className="flex-1 h-8 text-xs"
-            onClick={copy}
-          >
-            {copied ? (
-              <>
-                <Check className="size-3.5" /> Copied
-              </>
-            ) : (
-              <>
-                <Copy className="size-3.5" /> Copy URL
-              </>
-            )}
-          </Button>
-          <Button
-            size="sm"
-            variant="default"
-            className="flex-1 h-8 text-xs"
-            asChild
-          >
-            <a href={link.directUrl ?? "#"} target="_blank" rel="noopener noreferrer">
-              <ExternalLink className="size-3.5" /> Open
-            </a>
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md bg-muted/60 py-1">
-      <div className="text-[9px] uppercase text-muted-foreground">{label}</div>
-      <div className="text-xs font-semibold tabular-nums">{value}</div>
-    </div>
-  );
-}
-
 function RevenueChart({ daily }: { daily: DailyPoint[] }) {
   if (daily.length === 0) {
     return (
       <div className="h-[260px] grid place-items-center text-sm text-muted-foreground text-center px-4">
-        No revenue recorded yet since Sept 1, 2026.
+        No revenue recorded in the selected range.
       </div>
     );
   }
