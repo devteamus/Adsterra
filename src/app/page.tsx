@@ -12,11 +12,15 @@ import {
 } from "recharts";
 import {
   Activity,
+  Copy,
+  Check,
   ExternalLink,
   Eye,
+  Globe2,
   Link2,
   MousePointerClick,
   RefreshCw,
+  Share2,
   TrendingUp,
   Wallet,
 } from "lucide-react";
@@ -57,6 +61,23 @@ interface DailyPoint {
   revenue: number;
 }
 
+interface RangeSummary {
+  label: string;
+  days: number;
+  revenue: number;
+  impressions: number;
+  clicks: number;
+}
+
+interface CountryRow {
+  country: string;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  cpm: number;
+  revenue: number;
+}
+
 interface SmartLink {
   id: number;
   title: string;
@@ -77,10 +98,13 @@ interface DashboardData {
     ctr: number;
     cpm: number;
   };
+  ranges: RangeSummary[];
   daily: DailyPoint[];
   linkEarnings: LinkEarning[];
+  topCountries: CountryRow[];
   smartLinks: SmartLink[];
   placementsCount: number;
+  activeDirectLinksCount: number;
 }
 
 function formatUsd(n: number): string {
@@ -101,13 +125,20 @@ function formatPct(n: number): string {
 }
 
 function formatDateLabel(iso: string): string {
-  // iso = YYYY-MM-DD, render as "Sep 4"
   const d = new Date(iso + "T00:00:00Z");
   return d.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     timeZone: "UTC",
   });
+}
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 export default function DashboardPage() {
@@ -127,9 +158,7 @@ export default function DashboardPage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(
-          body?.error || `Request failed with HTTP ${res.status}`
-        );
+        throw new Error(body?.error || `Request failed with HTTP ${res.status}`);
       }
       const json = (await res.json()) as DashboardData;
       setData(json);
@@ -153,25 +182,23 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="size-9 rounded-lg bg-primary text-primary-foreground grid place-items-center">
-              <TrendingUp className="size-5" />
+        <div className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="size-8 sm:size-9 shrink-0 rounded-lg bg-primary text-primary-foreground grid place-items-center">
+              <TrendingUp className="size-4 sm:size-5" />
             </div>
-            <div>
-              <h1 className="text-base sm:text-lg font-semibold leading-tight">
+            <div className="min-w-0">
+              <h1 className="text-sm sm:text-lg font-semibold leading-tight truncate">
                 Adsterra Revenue
               </h1>
-              <p className="text-xs text-muted-foreground">
-                {data
-                  ? `${data.startDate} → ${data.finishDate}`
-                  : "Loading date range…"}
+              <p className="text-[11px] sm:text-xs text-muted-foreground truncate">
+                {data ? `${data.startDate} → ${data.finishDate}` : "Loading date range…"}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {data?.dbLastUpdateTime && (
-              <span className="hidden sm:inline text-xs text-muted-foreground">
+              <span className="hidden md:inline text-xs text-muted-foreground">
                 Updated {new Date(data.dbLastUpdateTime + "Z").toLocaleString()}
               </span>
             )}
@@ -181,16 +208,14 @@ export default function DashboardPage() {
               onClick={() => fetchData(true)}
               disabled={refreshing || loading}
             >
-              <RefreshCw
-                className={`size-4 ${refreshing ? "animate-spin" : ""}`}
-              />
+              <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="flex-1 mx-auto max-w-7xl w-full px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 sm:space-y-6">
         {error && (
           <Alert variant="destructive">
             <AlertTitle>Failed to load dashboard</AlertTitle>
@@ -207,19 +232,41 @@ export default function DashboardPage() {
           </Alert>
         )}
 
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Top KPI row: Live Balance + 7/15/30 day ranges */}
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <KpiCard
             icon={<Wallet className="size-4" />}
-            label="Total Balance"
+            label="Live Balance"
             value={loading ? null : formatUsd(data?.totals.revenue ?? 0)}
-            hint="Revenue since Sept 1, 2026"
+            hint={`Since ${data?.minDate ?? "Sept 1, 2026"}`}
             tone="primary"
           />
+          {loading ? (
+            <>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </>
+          ) : (
+            (data?.ranges ?? []).map((r) => (
+              <KpiCard
+                key={r.label}
+                icon={<TrendingUp className="size-4" />}
+                label={r.label}
+                value={formatUsd(r.revenue)}
+                hint={`${formatInt(r.impressions)} impr · ${formatInt(r.clicks)} clicks`}
+              />
+            ))
+          )}
+        </section>
+
+        {/* Secondary KPIs */}
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <KpiCard
             icon={<Eye className="size-4" />}
             label="Impressions"
             value={loading ? null : formatInt(data?.totals.impressions ?? 0)}
-            hint={`${data?.placementsCount ?? 0} placements tracked`}
+            hint={`${data?.placementsCount ?? 0} placements`}
           />
           <KpiCard
             icon={<MousePointerClick className="size-4" />}
@@ -231,17 +278,22 @@ export default function DashboardPage() {
             icon={<Activity className="size-4" />}
             label="Avg CPM"
             value={loading ? null : formatUsd(data?.totals.cpm ?? 0)}
-            hint="Per 1,000 impressions"
+            hint="Per 1,000 impr."
+          />
+          <KpiCard
+            icon={<Link2 className="size-4" />}
+            label="Active Direct Links"
+            value={loading ? null : formatInt(data?.activeDirectLinksCount ?? 0)}
+            hint="With direct URL"
           />
         </section>
 
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Daily chart + Top earner */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">
-                  Daily Revenue
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Daily Revenue</CardTitle>
                 <Badge variant="secondary">USD</Badge>
               </div>
             </CardHeader>
@@ -271,11 +323,8 @@ export default function DashboardPage() {
                       {topLink.title}
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <Stat
-                      label="Share of total"
-                      value={formatPct(topLink.share)}
-                    />
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <Stat label="Share of total" value={formatPct(topLink.share)} />
                     <Stat label="Impressions" value={formatInt(topLink.impressions)} />
                     <Stat label="Clicks" value={formatInt(topLink.clicks)} />
                     <Stat label="CTR" value={formatPct(topLink.ctr)} />
@@ -287,7 +336,6 @@ export default function DashboardPage() {
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-xs text-primary hover:underline truncate max-w-full"
                     >
-                      <ExternalLink className="size-3 shrink-0" />
                       <span className="truncate">{topLink.directUrl}</span>
                     </a>
                   )}
@@ -301,13 +349,12 @@ export default function DashboardPage() {
           </Card>
         </section>
 
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Per-link + Top countries */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">
-                  Per-Link Earnings
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Active Direct Links — Earnings</CardTitle>
                 <Badge variant="secondary">
                   {data?.linkEarnings.length ?? 0} links
                 </Badge>
@@ -317,16 +364,16 @@ export default function DashboardPage() {
               {loading ? (
                 <Skeleton className="h-[320px] w-full" />
               ) : (
-                <div className="max-h-[400px] overflow-y-auto rounded-md border border-border/60 custom-scroll">
+                <div className="max-h-[420px] overflow-y-auto rounded-md border border-border/60 custom-scroll">
                   <Table>
                     <TableHeader className="sticky top-0 bg-card z-10">
                       <TableRow>
-                        <TableHead className="w-[34%]">Link</TableHead>
+                        <TableHead className="w-[32%]">Link</TableHead>
                         <TableHead className="text-right">Impr.</TableHead>
                         <TableHead className="text-right">Clicks</TableHead>
-                        <TableHead className="text-right">CPM</TableHead>
+                        <TableHead className="text-right hidden sm:table-cell">CPM</TableHead>
                         <TableHead className="text-right">Revenue</TableHead>
-                        <TableHead className="text-right">Share</TableHead>
+                        <TableHead className="text-right hidden sm:table-cell">Share</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -334,16 +381,16 @@ export default function DashboardPage() {
                         <TableRow>
                           <TableCell
                             colSpan={6}
-                            className="text-center text-muted-foreground py-8"
+                            className="text-center text-muted-foreground py-8 text-sm"
                           >
-                            No per-link data since Sept 1, 2026.
+                            No active direct links with earnings since {data?.minDate ?? "Sept 1, 2026"}.
                           </TableCell>
                         </TableRow>
                       ) : (
                         data?.linkEarnings.map((row) => (
                           <TableRow key={row.placementId}>
                             <TableCell>
-                              <div className="font-medium truncate max-w-[220px]">
+                              <div className="font-medium truncate max-w-[160px] sm:max-w-[240px]">
                                 {row.title}
                               </div>
                               {row.directUrl && (
@@ -351,7 +398,7 @@ export default function DashboardPage() {
                                   href={row.directUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-[11px] text-muted-foreground hover:text-primary truncate block max-w-[220px]"
+                                  className="text-[11px] text-muted-foreground hover:text-primary truncate block max-w-[160px] sm:max-w-[240px]"
                                 >
                                   {row.directUrl}
                                 </a>
@@ -363,13 +410,13 @@ export default function DashboardPage() {
                             <TableCell className="text-right tabular-nums">
                               {formatInt(row.clicks)}
                             </TableCell>
-                            <TableCell className="text-right tabular-nums">
+                            <TableCell className="text-right tabular-nums hidden sm:table-cell">
                               {formatUsd(row.cpm)}
                             </TableCell>
                             <TableCell className="text-right tabular-nums font-medium">
                               {formatUsd(row.revenue)}
                             </TableCell>
-                            <TableCell className="text-right tabular-nums">
+                            <TableCell className="text-right hidden sm:table-cell">
                               <ShareBar value={row.share} />
                             </TableCell>
                           </TableRow>
@@ -385,9 +432,97 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">
-                  Smart Links
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Top 5 Countries</CardTitle>
+                <Globe2 className="size-4 text-muted-foreground" />
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <Skeleton className="h-[260px] w-full" />
+              ) : data?.topCountries.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No country breakdown available.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {data?.topCountries.map((c, i) => {
+                    const max = data?.topCountries[0]?.revenue ?? 1;
+                    return (
+                      <div key={i} className="space-y-1">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium flex items-center gap-2">
+                            <span className="text-base">{flagEmoji(c.country)}</span>
+                            {c.country}
+                          </span>
+                          <span className="tabular-nums font-medium">
+                            {formatUsd(c.revenue)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                          <span>
+                            {formatInt(c.impressions)} impr · {formatInt(c.clicks)} clicks
+                          </span>
+                          <span>CPM {formatUsd(c.cpm)}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full bg-primary rounded-full"
+                            style={{
+                              width: `${Math.min(100, (c.revenue / max) * 100)}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* Social share preview cards */}
+        <section>
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium">Shareable Preview Cards</CardTitle>
+                <Badge variant="secondary">
+                  {data?.linkEarnings.length ?? 0} links
+                </Badge>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Each card is a copy-ready share preview with the direct URL, copy button and earnings.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {[0, 1, 2].map((i) => (
+                    <Skeleton key={i} className="h-[150px] w-full" />
+                  ))}
+                </div>
+              ) : data?.linkEarnings.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No shareable cards yet — once Adsterra records direct link traffic, preview cards will appear here.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                  {data?.linkEarnings.map((link) => (
+                    <ShareCard key={link.placementId} link={link} />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* Smart Links */}
+        <section>
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium">Smart Links</CardTitle>
                 <Badge variant="secondary">
                   {data?.smartLinks.length ?? 0}
                 </Badge>
@@ -395,22 +530,20 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <Skeleton className="h-[320px] w-full" />
+                <Skeleton className="h-[200px] w-full" />
               ) : data?.smartLinks.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No SmartLinks configured.
                 </p>
               ) : (
-                <div className="max-h-[400px] overflow-y-auto space-y-2 custom-scroll pr-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {data?.smartLinks.map((sl) => (
                     <div
                       key={sl.id}
                       className="rounded-md border border-border/60 p-3 hover:bg-muted/50 transition-colors"
                     >
                       <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="font-medium text-sm truncate">
-                          {sl.title}
-                        </span>
+                        <span className="font-medium text-sm truncate">{sl.title}</span>
                         <Badge
                           variant={sl.status === "Active" ? "default" : "outline"}
                           className="text-[10px]"
@@ -439,7 +572,7 @@ export default function DashboardPage() {
         </section>
       </main>
 
-      <footer className="mt-auto border-t border-border/60 py-4 text-center text-xs text-muted-foreground">
+      <footer className="mt-auto border-t border-border/60 py-4 text-center text-[11px] sm:text-xs text-muted-foreground px-3">
         Data source: Adsterra Publisher API · Only showing data from{" "}
         {data?.minDate ?? "2026-09-01"} onwards
       </footer>
@@ -477,13 +610,13 @@ function KpiCard({
 }) {
   return (
     <Card>
-      <CardContent className="p-5">
+      <CardContent className="p-3 sm:p-5">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          <span className="text-[10px] sm:text-xs font-medium text-muted-foreground uppercase tracking-wide truncate">
             {label}
           </span>
           <span
-            className={`size-7 rounded-md grid place-items-center ${
+            className={`size-6 sm:size-7 shrink-0 rounded-md grid place-items-center ${
               tone === "primary"
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted text-muted-foreground"
@@ -492,12 +625,27 @@ function KpiCard({
             {icon}
           </span>
         </div>
-        <div className="mt-3 text-2xl font-semibold tabular-nums">
-          {value ?? <Skeleton className="h-7 w-24" />}
+        <div className="mt-2 sm:mt-3 text-lg sm:text-2xl font-semibold tabular-nums truncate">
+          {value ?? <Skeleton className="h-6 sm:h-7 w-20 sm:w-24" />}
         </div>
         {hint && (
-          <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+          <p className="mt-1 text-[10px] sm:text-xs text-muted-foreground truncate">{hint}</p>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <Card>
+      <CardContent className="p-3 sm:p-5">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-3 w-20" />
+          <Skeleton className="size-7 rounded-md" />
+        </div>
+        <Skeleton className="mt-3 h-7 w-24" />
+        <Skeleton className="mt-2 h-3 w-32" />
       </CardContent>
     </Card>
   );
@@ -515,15 +663,116 @@ function Stat({ label, value }: { label: string; value: string }) {
 function ShareBar({ value }: { value: number }) {
   return (
     <div className="flex items-center gap-2 justify-end">
-      <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+      <div className="w-12 sm:w-16 h-1.5 rounded-full bg-muted overflow-hidden">
         <div
           className="h-full bg-primary rounded-full"
           style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
         />
       </div>
-      <span className="text-xs tabular-nums w-12 text-right">
+      <span className="text-xs tabular-nums w-10 text-right">
         {value.toFixed(1)}%
       </span>
+    </div>
+  );
+}
+
+function flagEmoji(country: string): string {
+  if (!country || country.length !== 2 || country === "—") return "🏳️";
+  const code = country.toUpperCase();
+  const cp: number[] = [];
+  for (let i = 0; i < code.length; i++) {
+    cp.push(0x1f1e6 + (code.charCodeAt(i) - 65));
+  }
+  return String.fromCodePoint(...cp);
+}
+
+function ShareCard({ link }: { link: LinkEarning }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(link.directUrl ?? "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }, [link.directUrl]);
+
+  return (
+    <div className="rounded-lg border border-border/60 overflow-hidden bg-card hover:shadow-md transition-shadow">
+      {/* Header strip */}
+      <div className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground px-3 py-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-wider opacity-80">
+            Adsterra Direct Link
+          </span>
+          <Badge
+            variant="secondary"
+            className="text-[10px] bg-white/20 text-primary-foreground border-0"
+          >
+            ${link.revenue.toFixed(2)}
+          </Badge>
+        </div>
+        <div className="mt-1 font-semibold text-sm truncate">{link.title}</div>
+      </div>
+
+      {/* Body */}
+      <div className="p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="size-8 rounded bg-muted grid place-items-center text-muted-foreground shrink-0">
+            <Share2 className="size-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] text-muted-foreground">{hostnameOf(link.directUrl ?? "")}</div>
+            <div className="text-xs font-mono truncate">{link.directUrl}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-1 text-center pt-1">
+          <MiniStat label="Impr." value={formatInt(link.impressions)} />
+          <MiniStat label="Clicks" value={formatInt(link.clicks)} />
+          <MiniStat label="CPM" value={formatUsd(link.cpm)} />
+        </div>
+
+        <div className="flex gap-1.5 pt-1">
+          <Button
+            size="sm"
+            variant="outline"
+            className="flex-1 h-8 text-xs"
+            onClick={copy}
+          >
+            {copied ? (
+              <>
+                <Check className="size-3.5" /> Copied
+              </>
+            ) : (
+              <>
+                <Copy className="size-3.5" /> Copy URL
+              </>
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant="default"
+            className="flex-1 h-8 text-xs"
+            asChild
+          >
+            <a href={link.directUrl ?? "#"} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="size-3.5" /> Open
+            </a>
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-muted/60 py-1">
+      <div className="text-[9px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-xs font-semibold tabular-nums">{value}</div>
     </div>
   );
 }
@@ -531,7 +780,7 @@ function ShareBar({ value }: { value: number }) {
 function RevenueChart({ daily }: { daily: DailyPoint[] }) {
   if (daily.length === 0) {
     return (
-      <div className="h-[260px] grid place-items-center text-sm text-muted-foreground">
+      <div className="h-[260px] grid place-items-center text-sm text-muted-foreground text-center px-4">
         No revenue recorded yet since Sept 1, 2026.
       </div>
     );
