@@ -390,16 +390,6 @@ export default function DashboardPage() {
                     <Stat label="Clicks" value={formatInt(topLink.clicks)} />
                     <Stat label="CTR" value={formatPct(topLink.ctr)} />
                   </div>
-                  {topLink.directUrl && (
-                    <a
-                      href={topLink.directUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline truncate max-w-full"
-                    >
-                      <span className="truncate">{topLink.directUrl}</span>
-                    </a>
-                  )}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
@@ -454,16 +444,6 @@ export default function DashboardPage() {
                               <div className="font-medium truncate max-w-[160px] sm:max-w-[240px]">
                                 {row.title}
                               </div>
-                              {row.directUrl && (
-                                <a
-                                  href={row.directUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[11px] text-muted-foreground hover:text-primary truncate block max-w-[160px] sm:max-w-[240px]"
-                                >
-                                  {row.directUrl}
-                                </a>
-                              )}
                             </TableCell>
                             <TableCell className="text-right tabular-nums">
                               {formatInt(row.impressions)}
