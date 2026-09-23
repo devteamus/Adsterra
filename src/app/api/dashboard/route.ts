@@ -132,6 +132,37 @@ function addDays(ymd: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Ensure every day from `start` to `finish` has a row, even if Adsterra
+ * hasn't posted stats for it yet (their API typically lags a few hours on
+ * the current day). Without this, a missing "today" row simply vanishes
+ * from the chart instead of showing as $0 — which looked like the
+ * dashboard "wasn't showing today's revenue" even after the timezone fix.
+ */
+function fillMissingDays(
+  rows: DailyPoint[],
+  start: string,
+  finish: string
+): DailyPoint[] {
+  const byDate = new Map(rows.map((r) => [r.date, r]));
+  const out: DailyPoint[] = [];
+  let cursor = start;
+  while (cursor <= finish) {
+    out.push(
+      byDate.get(cursor) ?? {
+        date: cursor,
+        impressions: 0,
+        clicks: 0,
+        ctr: 0,
+        cpm: 0,
+        revenue: 0,
+      }
+    );
+    cursor = addDays(cursor, 1);
+  }
+  return out;
+}
+
 function summarize(items: { impression?: number; clicks?: number; ctr?: number; cpm?: number; revenue?: number }[]) {
   const impressions = items.reduce((s, r) => s + Number(r.impression ?? 0), 0);
   const clicks = items.reduce((s, r) => s + Number(r.clicks ?? 0), 0);
@@ -224,7 +255,7 @@ export async function GET(request: Request) {
 
     const activeDirectLinksCount = linkEarnings.length;
 
-    const daily: DailyPoint[] = dailyRes.items
+    const dailyRaw: DailyPoint[] = dailyRes.items
       .map((r) => ({
         date: r.date ?? "",
         impressions: Number(r.impression ?? 0),
@@ -234,6 +265,10 @@ export async function GET(request: Request) {
         revenue: Number(r.revenue ?? 0),
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Backfill any day (including today) that Adsterra hasn't reported yet,
+    // so the chart's x-axis always runs all the way through `finishDate`.
+    const daily: DailyPoint[] = fillMissingDays(dailyRaw, startDate, finishDate);
 
     // Top 10 countries by revenue (with full names)
     const topCountries: CountryRow[] = byCountryRes.items
