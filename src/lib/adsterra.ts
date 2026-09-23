@@ -248,10 +248,23 @@ export async function getStats(args: {
 }
 
 /**
- * Convenience: today's date in YYYY-MM-DD (UTC).
+ * Convenience: "today" in YYYY-MM-DD, anchored to Asia/Dhaka (UTC+6).
+ *
+ * IMPORTANT: this must NOT use plain UTC (via toYMD(new Date())). Vercel's
+ * serverless functions run in UTC, so between 00:00–05:59 Dhaka time the
+ * UTC calendar day is still "yesterday". That off-by-one silently clamped
+ * the dashboard's finish_date back a day and hid the current day's revenue.
+ * Anchoring to Asia/Dhaka keeps "today" in sync with the business's local day
+ * no matter what timezone the server host runs in.
  */
 export function todayYMD(): string {
-  return toYMD(new Date());
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Dhaka",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(new Date()); // en-CA locale formats as YYYY-MM-DD
 }
 
 export const MIN_DATE = ADSTERRA_MIN_DATE;
